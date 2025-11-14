@@ -1,174 +1,209 @@
+// ===== BOT SYNC MODULE (Complete localStorage Version) =====
+
 class BotSync {
     constructor() {
         this.userId = null;
         this.initData = null;
         this.isConnected = false;
-        this.useLocalStorage = true; // GitHub Pages mode
+        this.storageKey = 'autopost_data';
     }
 
     async init(userId, initData) {
         this.userId = userId;
         this.initData = initData;
+        this.storageKey = `autopost_${userId}`;
         
-        console.log('🟡 Bot sync - Frontend Only Mode (No Backend)');
-        console.log('📝 Data will be stored in browser only');
+        // Initialize empty storage if not exists
+        if (!localStorage.getItem(this.storageKey)) {
+            const initialData = {
+                channels: [],
+                scheduled: [],
+                recurring: [],
+                drafts: [],
+                stats: {
+                    sent_total: 0,
+                    is_subscribed: true,
+                    is_admin: false
+                }
+            };
+            localStorage.setItem(this.storageKey, JSON.stringify(initialData));
+            console.log('✅ Initialized new storage for user:', userId);
+        }
         
-        // Load data from localStorage
-        this.loadFromLocalStorage();
         this.isConnected = true;
-        
+        console.log('✅ Bot sync initialized (localStorage mode)');
         return true;
     }
 
-    loadFromLocalStorage() {
+    getStorage() {
         try {
-            const data = localStorage.getItem(`autopost_${this.userId}`);
-            if (data) {
-                const parsed = JSON.parse(data);
-                console.log('✅ Loaded data from localStorage:', parsed);
-            }
+            const data = localStorage.getItem(this.storageKey);
+            return data ? JSON.parse(data) : {
+                channels: [],
+                scheduled: [],
+                recurring: [],
+                drafts: [],
+                stats: { sent_total: 0, is_subscribed: true, is_admin: false }
+            };
         } catch (error) {
-            console.error('❌ localStorage error:', error);
+            console.error('❌ Storage read error:', error);
+            return {
+                channels: [],
+                scheduled: [],
+                recurring: [],
+                drafts: [],
+                stats: { sent_total: 0, is_subscribed: true, is_admin: false }
+            };
+        }
+    }
+
+    saveStorage(data) {
+        try {
+            localStorage.setItem(this.storageKey, JSON.stringify(data));
+            console.log('💾 Storage saved successfully');
+            return true;
+        } catch (error) {
+            console.error('❌ Storage save error:', error);
+            return false;
         }
     }
 
     async testConnection() {
-        // No backend available
-        console.log('⚠️ Backend not available - using localStorage');
-        return { success: true, message: 'Frontend only mode' };
+        return { success: true, message: 'localStorage mode active' };
     }
 
     async request(endpoint, data = {}) {
         console.log(`📤 Request: ${endpoint}`, data);
         
-        // Simulate backend with localStorage
         try {
-            const storageKey = `autopost_${this.userId}`;
-            let storage = JSON.parse(localStorage.getItem(storageKey) || '{}');
-            
+            const storage = this.getStorage();
+            let result;
+
             switch(endpoint) {
                 case 'get_user_data':
-                    return this.handleGetUserData(storage);
-                
+                    result = {
+                        success: true,
+                        data: {
+                            channels: storage.channels || [],
+                            scheduled: storage.scheduled || [],
+                            recurring: storage.recurring || [],
+                            drafts: storage.drafts || [],
+                            stats: storage.stats || {
+                                sent_total: 0,
+                                is_subscribed: true,
+                                is_admin: false
+                            }
+                        }
+                    };
+                    break;
+
                 case 'schedule_message':
-                    return this.handleScheduleMessage(storage, data);
-                
+                    const scheduleId = `s${Date.now()}${Math.random().toString(36).substr(2, 6)}`;
+                    const scheduledMsg = {
+                        id: scheduleId,
+                        content: data.content || '',
+                        datetime: data.datetime || '',
+                        channel_id: data.channel_id || '',
+                        created_at: new Date().toISOString()
+                    };
+                    
+                    if (!storage.scheduled) storage.scheduled = [];
+                    storage.scheduled.push(scheduledMsg);
+                    this.saveStorage(storage);
+                    
+                    result = { success: true, data: { id: scheduleId } };
+                    console.log('✅ Message scheduled:', scheduleId);
+                    break;
+
                 case 'create_recurring':
-                    return this.handleCreateRecurring(storage, data);
-                
+                    const recurringId = `r${Date.now()}${Math.random().toString(36).substr(2, 6)}`;
+                    const recurringMsg = {
+                        id: recurringId,
+                        content: data.content || '',
+                        recurring: data.recurring || {},
+                        channel_id: data.channel_id || '',
+                        active: true,
+                        created_at: new Date().toISOString(),
+                        cron: this.convertToCron(data.recurring)
+                    };
+                    
+                    if (!storage.recurring) storage.recurring = [];
+                    storage.recurring.push(recurringMsg);
+                    this.saveStorage(storage);
+                    
+                    result = { success: true, data: { id: recurringId } };
+                    console.log('✅ Recurring message created:', recurringId);
+                    break;
+
                 case 'delete_message':
-                    return this.handleDeleteMessage(storage, data);
-                
+                    const { message_id, type } = data;
+                    
+                    if (type === 'scheduled' && storage.scheduled) {
+                        storage.scheduled = storage.scheduled.filter(m => m.id !== message_id);
+                        console.log('🗑️ Deleted scheduled:', message_id);
+                    } else if (type === 'recurring' && storage.recurring) {
+                        storage.recurring = storage.recurring.filter(m => m.id !== message_id);
+                        console.log('🗑️ Deleted recurring:', message_id);
+                    }
+                    
+                    this.saveStorage(storage);
+                    result = { success: true };
+                    break;
+
                 case 'disconnect_channel':
-                    return this.handleDisconnectChannel(storage);
-                
+                    storage.channels = [];
+                    this.saveStorage(storage);
+                    result = { success: true };
+                    console.log('🔌 Channel disconnected');
+                    break;
+
                 case 'save_draft':
-                    return this.handleSaveDraft(storage, data);
-                
+                    const draftId = `d${Date.now()}${Math.random().toString(36).substr(2, 6)}`;
+                    const draft = {
+                        id: draftId,
+                        content: data.content || '',
+                        created_at: new Date().toISOString()
+                    };
+                    
+                    if (!storage.drafts) storage.drafts = [];
+                    storage.drafts.push(draft);
+                    this.saveStorage(storage);
+                    
+                    result = { success: true, data: { id: draftId } };
+                    console.log('✅ Draft saved:', draftId);
+                    break;
+
                 default:
                     console.warn('⚠️ Unknown endpoint:', endpoint);
-                    return { success: false, error: 'Unknown endpoint' };
+                    result = { success: false, error: 'Unknown endpoint' };
             }
+
+            return result.data || result;
+
         } catch (error) {
             console.error(`❌ Sync error (${endpoint}):`, error);
             throw error;
         }
     }
 
-    handleGetUserData(storage) {
-        return {
-            channels: storage.channels || [],
-            scheduled: storage.scheduled || [],
-            recurring: storage.recurring || [],
-            drafts: storage.drafts || [],
-            stats: {
-                sent_total: storage.stats?.sent || 0,
-                is_subscribed: true,
-                is_admin: false
-            }
-        };
-    }
-
-    handleScheduleMessage(storage, data) {
-        if (!storage.scheduled) storage.scheduled = [];
+    convertToCron(recurring) {
+        if (!recurring || !recurring.type) return '0 12 * * *';
         
-        const id = `scheduled_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const { type, time, days } = recurring;
+        const [hour = '12', minute = '0'] = (time || '12:00').split(':');
         
-        const message = {
-            id,
-            content: data.content,
-            datetime: data.datetime,
-            channel_id: data.channel_id,
-            created_at: new Date().toISOString()
-        };
-        
-        storage.scheduled.push(message);
-        this.saveToLocalStorage(storage);
-        
-        return { id };
-    }
-
-    handleCreateRecurring(storage, data) {
-        if (!storage.recurring) storage.recurring = [];
-        
-        const id = `recurring_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        const message = {
-            id,
-            content: data.content,
-            channel_id: data.channel_id,
-            recurring: data.recurring,
-            active: true,
-            created_at: new Date().toISOString()
-        };
-        
-        storage.recurring.push(message);
-        this.saveToLocalStorage(storage);
-        
-        return { id };
-    }
-
-    handleDeleteMessage(storage, data) {
-        const { message_id, type } = data;
-        
-        if (type === 'scheduled' && storage.scheduled) {
-            storage.scheduled = storage.scheduled.filter(m => m.id !== message_id);
-        } else if (type === 'recurring' && storage.recurring) {
-            storage.recurring = storage.recurring.filter(m => m.id !== message_id);
-        }
-        
-        this.saveToLocalStorage(storage);
-        return { success: true };
-    }
-
-    handleDisconnectChannel(storage) {
-        storage.channels = [];
-        this.saveToLocalStorage(storage);
-        return { success: true };
-    }
-
-    handleSaveDraft(storage, data) {
-        if (!storage.drafts) storage.drafts = [];
-        
-        const id = `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        storage.drafts.push({
-            id,
-            content: data.content,
-            created_at: new Date().toISOString()
-        });
-        
-        this.saveToLocalStorage(storage);
-        return { id };
-    }
-
-    saveToLocalStorage(storage) {
-        try {
-            const storageKey = `autopost_${this.userId}`;
-            localStorage.setItem(storageKey, JSON.stringify(storage));
-            console.log('💾 Saved to localStorage');
-        } catch (error) {
-            console.error('❌ Save error:', error);
+        switch(type) {
+            case 'daily':
+                return `${minute} ${hour} * * *`;
+            case 'weekly':
+                return `${minute} ${hour} * * 1`;
+            case 'monthly':
+                return `${minute} ${hour} 1 * *`;
+            case 'custom':
+                const daysList = days && days.length ? days.join(',') : '*';
+                return `${minute} ${hour} * * ${daysList}`;
+            default:
+                return `${minute} ${hour} * * *`;
         }
     }
 }
@@ -178,19 +213,30 @@ const botSync = new BotSync();
 // ===== API METHODS =====
 
 async function syncWithBot(action, data) {
-    return await botSync.request(action, data);
+    try {
+        return await botSync.request(action, data);
+    } catch (error) {
+        console.error('Sync error:', error);
+        throw error;
+    }
 }
 
 // Initialize sync
 async function initBotSync() {
-    const user = telegramApp.user;
-    const initData = telegramApp.initData;
-    
-    if (!user) {
-        console.warn('⚠️ No user data - using demo mode');
-        await botSync.init('demo_user', '');
-    } else {
-        await botSync.init(user.id, initData);
+    try {
+        const user = telegramApp.user;
+        const initData = telegramApp.initData;
+        
+        if (!user || !user.id) {
+            console.warn('⚠️ No user data - using demo user');
+            await botSync.init('demo_123456', '');
+        } else {
+            await botSync.init(user.id, initData);
+        }
+        
+        console.log('✅ Sync initialized successfully');
+    } catch (error) {
+        console.error('❌ Sync initialization failed:', error);
     }
 }
 
