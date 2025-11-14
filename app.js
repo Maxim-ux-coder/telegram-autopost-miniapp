@@ -1,3 +1,194 @@
+// ===== CHANNEL CONNECTION FIX =====
+// Ավելացրեք app.js-ի սկզբում
+
+// Helper function to add test channel (demo mode)
+function addTestChannel(userId) {
+    const storageKey = `autopost_${userId}`;
+    const storage = JSON.parse(localStorage.getItem(storageKey) || '{}');
+    
+    if (!storage.channels || storage.channels.length === 0) {
+        storage.channels = [{
+            id: '@test_channel',
+            title: 'Test Channel',
+            username: 'test_channel',
+            subscribers: 0,
+            posts: 0,
+            scheduled: 0,
+            sent_total: 0
+        }];
+        
+        localStorage.setItem(storageKey, JSON.stringify(storage));
+        console.log('✅ Test channel added');
+    }
+}
+
+// Fix channel connection handler
+async function channel_connect_handler_fixed(update, context) {
+    const user_id = update.message?.from_user?.id || telegramApp.user?.id || 'demo_123456';
+    const text = (update.message?.text || '').trim();
+    
+    console.log('📝 Channel input:', text);
+    
+    // For demo mode, accept any input
+    const channelId = text.startsWith('@') ? text : `@${text}`;
+    
+    const storageKey = `autopost_${user_id}`;
+    const storage = JSON.parse(localStorage.getItem(storageKey) || '{}');
+    
+    // Add channel
+    storage.channels = [{
+        id: channelId,
+        title: channelId.replace('@', ''),
+        username: channelId.replace('@', ''),
+        subscribers: 0,
+        posts: 0,
+        scheduled: 0,
+        sent_total: 0
+    }];
+    
+    localStorage.setItem(storageKey, JSON.stringify(storage));
+    
+    console.log('✅ Channel connected:', channelId);
+    
+    // Show success message
+    showToast('success', 'Հաջողություն', `Ալիքը կապակցված է: ${channelId}`);
+    
+    // Reload user data
+    await loadUserData();
+    
+    return true;
+}
+
+// Fix loadUserData to ensure it reads from localStorage
+async function loadUserData() {
+    try {
+        const userId = AppState.user?.id || 'demo_123456';
+        
+        // Get data from localStorage via syncWithBot
+        const data = await syncWithBot('get_user_data', {
+            user_id: userId
+        });
+        
+        console.log('📊 Loaded user data:', data);
+        
+        AppState.channels = data.channels || [];
+        AppState.scheduledMessages = data.scheduled || [];
+        AppState.recurringMessages = data.recurring || [];
+        AppState.drafts = data.drafts || [];
+        AppState.stats = data.stats || {};
+        
+        updateUserInfo();
+        
+        console.log('✅ User data loaded successfully');
+        console.log('  - Channels:', AppState.channels.length);
+        console.log('  - Scheduled:', AppState.scheduledMessages.length);
+        console.log('  - Recurring:', AppState.recurringMessages.length);
+        
+    } catch (error) {
+        console.error('❌ Load user data error:', error);
+        
+        // Initialize with empty data
+        AppState.channels = [];
+        AppState.scheduledMessages = [];
+        AppState.recurringMessages = [];
+        AppState.drafts = [];
+        AppState.stats = { sent_total: 0 };
+        
+        throw error;
+    }
+}
+
+// Fix handleMessageSubmit to use correct data structure
+async function handleMessageSubmit(e) {
+    e.preventDefault();
+    
+    const modal = document.getElementById('message-modal');
+    const type = modal.dataset.type;
+    const content = document.getElementById('message-content').value.trim();
+    
+    if (!content) {
+        showToast('warning', 'Ուշադրություն', 'Մուտքագրեք նամակի տեքստը');
+        return;
+    }
+    
+    // Validate channel connection
+    if (AppState.channels.length === 0) {
+        showToast('warning', 'Ուշադրություն', 'Նախ միացրեք ալիք');
+        return;
+    }
+    
+    try {
+        const messageData = {
+            content,
+            channel_id: AppState.channels[0].id,
+            user_id: AppState.user?.id || 'demo_123456'
+        };
+        
+        if (type === 'scheduled') {
+            const date = document.getElementById('schedule-date').value;
+            const time = document.getElementById('schedule-time').value;
+            
+            if (!date || !time) {
+                showToast('warning', 'Ուշադրություն', 'Ընտրեք ամսաթիվ և ժամ');
+                return;
+            }
+            
+            messageData.datetime = `${date} ${time}`;
+            
+            console.log('📅 Scheduling message:', messageData);
+            const result = await syncWithBot('schedule_message', messageData);
+            console.log('✅ Scheduled:', result);
+            
+            showToast('success', 'Հաջողություն', 'Նամակը պլանավորված է');
+            
+        } else if (type === 'recurring') {
+            const recurringData = getRecurringSettings();
+            
+            if (!recurringData) {
+                showToast('warning', 'Ուշադրություն', 'Ընտրեք կրկնության ռեժիմ');
+                return;
+            }
+            
+            messageData.recurring = recurringData;
+            
+            console.log('🔄 Creating recurring:', messageData);
+            const result = await syncWithBot('create_recurring', messageData);
+            console.log('✅ Created:', result);
+            
+            showToast('success', 'Հաջողություն', 'Կրկնվող նամակը ստեղծված է');
+            
+        } else if (type === 'draft') {
+            console.log('📝 Saving draft:', messageData);
+            const result = await syncWithBot('save_draft', messageData);
+            console.log('✅ Saved:', result);
+            
+            showToast('success', 'Հաջողություն', 'Սևագիրը պահպանված է');
+        }
+        
+        closeModal();
+        
+        // Reload data
+        await loadUserData();
+        await loadPageData(AppState.currentPage);
+        updateStats();
+        
+        telegramApp.hapticFeedback('success');
+        
+    } catch (error) {
+        console.error('❌ Submit message error:', error);
+        showToast('error', 'Սխալ', 'Չհաջողվեց պահպանել նամակը');
+    }
+}
+
+// Add this to your existing button_handler in app.js
+// Find the 'connect_channel' case and replace it with:
+
+/*
+
+*/
+
+console.log('✅ Channel connection fixes loaded');
+
 // ===== GLOBAL STATE =====
 const AppState = {
     currentPage: 'dashboard',
@@ -1144,19 +1335,47 @@ async function deleteMessage(id, type) {
 }
 
 async function connectChannel() {
-    telegramApp.showPopup({
-        title: 'Միացնել ալիք',
-        message: 'Ուղարկեք ալիքի username-ը կամ ID-ն բոտին @YourBotUsername',
-        buttons: [
-            { id: 'open_bot', type: 'default', text: 'Բացել բոտը' },
-            { id: 'cancel', type: 'cancel' }
-        ]
-    }, (buttonId) => {
-        if (buttonId === 'open_bot') {
-            telegramApp.openTelegramLink('https://t.me/YourBotUsername');
-        }
-    });
-}
+elif query.data == 'connect_channel':
+    // Show prompt for channel input
+    await query.edit_message_text(
+        '🔢 <b>Կապակցել ալիք</b>\n\nՄուտքագրեք ալիքի @username-ը:\n\n<b>Օրինակ:</b> @mychannel',
+        parse_mode='HTML'
+    );
+    
+    // For demo mode in browser
+    const channelInput = prompt('Մուտքագրեք ալիքի username-ը (օրինակ: @mychannel):');
+    
+    if (channelInput) {
+        const userId = AppState.user?.id || 'demo_123456';
+        const storageKey = `autopost_${userId}`;
+        const storage = JSON.parse(localStorage.getItem(storageKey) || '{}');
+        
+        const channelId = channelInput.startsWith('@') ? channelInput : `@${channelInput}`;
+        
+        storage.channels = [{
+            id: channelId,
+            title: channelId.replace('@', ''),
+            username: channelId.replace('@', ''),
+            subscribers: 0,
+            posts: 0,
+            scheduled: 0,
+            sent_total: 0
+        }];
+        
+        localStorage.setItem(storageKey, JSON.stringify(storage));
+        
+        await loadUserData();
+        
+        showToast('success', 'Հաջողություն', `Ալիքը կապակցված է: ${channelId}`);
+        
+        // Update UI
+        const is_subscribed = await check_all_subscriptions(context.bot, userId);
+        await query.edit_message_text(
+            `✅ Ալիքը կապակցված է:\n\n<code>${channelId}</code>`,
+            parse_mode='HTML',
+            reply_markup=get_main_keyboard(userId, is_subscribed, page=1)
+        );
+    }
 
 async function disconnectChannel(channelId) {
     try {
